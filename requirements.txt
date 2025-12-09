@@ -1,0 +1,5 @@
+
+# Minimal runtime: Python 3.8+
+# No third-party dependencies required for the core calculator.
+# Optional (uncomment as needed):
+# matplotlib>=3.7       # for charts
