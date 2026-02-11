@@ -176,7 +176,7 @@ def years_until_depletion(params: PlanParams, max_years: int = 100) -> float:
 if __name__ == "__main__":
     # Example: simple scenario
     p = PlanParams(
-        current_savings=380_000,
+        current_savings=350_000,
         annual_return_nominal=0.125, # (Tesouro Selic/CDI after 15% IR and 0.20% custody)
         annual_inflation=0.047, # Current 12‑month IPCA
         monthly_withdrawal=4_000,
