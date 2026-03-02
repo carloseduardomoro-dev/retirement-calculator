@@ -13,6 +13,8 @@ class PlanParams:
     effective_tax_rate_on_returns: Optional[float] = None  # simple optional haircut
     start_age: Optional[float] = None      # optional age, used for labeling
     yearly_withdrawal: Optional[float] = None  # optional yearly withdrawal in January
+    yearly_maintenance: float = 0.0               # additional annual expenses (house/car) paid each January
+    start_month: int = 1                    # month (1=Jan..12=Dec) when simulation begins
 
     def monthly_nominal_return(self) -> float:
         """Convert nominal annual return to effective monthly return."""
@@ -37,31 +39,43 @@ class PlanParams:
 def simulate_retirement(params: PlanParams, max_years: int = 100, adjust_withdrawal_for_inflation: bool = True) -> dict:
     """
     Deterministic month-by-month simulation with inflation-adjusted monthly withdrawal if specified.
+    Supports optional yearly withdrawals and additional annual maintenance expenses.
     Returns a dict with summary and a list of monthly snapshots.
     """
     balance = params.current_savings
     m_return = params.monthly_nominal_return()
     monthly_withdrawal = params.monthly_withdrawal
     yearly_withdrawal = params.yearly_withdrawal
+    yearly_maintenance = params.yearly_maintenance
+    start_month = params.start_month if 1 <= params.start_month <= 12 else 1
     months = max_years * 12
     snapshots = []
     monthly_inflation = (1 + params.annual_inflation) ** (1/12) - 1
     yearly_inflation = params.annual_inflation
     adj_yearly_withdrawal = yearly_withdrawal if yearly_withdrawal is not None else 0.0
+    adj_yearly_maintenance = yearly_maintenance
 
     for m in range(1, months + 1):
+        # determine calendar month for this step (1=Jan..12=Dec)
+        cal_month = ((start_month - 1) + (m - 1)) % 12 + 1
+
         # Adjust withdrawal for inflation if enabled
         if adjust_withdrawal_for_inflation and m > 1:
             monthly_withdrawal *= (1 + monthly_inflation)
-            if yearly_withdrawal is not None and (m % 12 == 1):
+            if yearly_withdrawal is not None and cal_month == 1:
                 # Adjust yearly withdrawal for inflation each January
                 adj_yearly_withdrawal *= (1 + yearly_inflation)
+            if yearly_maintenance and cal_month == 1:
+                # adjust maintenance cost as well
+                adj_yearly_maintenance *= (1 + yearly_inflation)
 
         # Apply withdrawal timing
         if params.withdrawal_timing == "start":
             balance -= monthly_withdrawal
-            if yearly_withdrawal is not None and (m % 12 == 1):
+            if yearly_withdrawal is not None and cal_month == 1:
                 balance -= adj_yearly_withdrawal
+            if yearly_maintenance and cal_month == 1:
+                balance -= adj_yearly_maintenance
         elif params.withdrawal_timing == "end":
             pass  # withdraw after growth
         else:
@@ -74,16 +88,20 @@ def simulate_retirement(params: PlanParams, max_years: int = 100, adjust_withdra
 
         if params.withdrawal_timing == "end":
             balance -= monthly_withdrawal
-            if yearly_withdrawal is not None and (m % 12 == 1):
+            if yearly_withdrawal is not None and cal_month == 1:
                 balance -= adj_yearly_withdrawal
+            if yearly_maintenance and cal_month == 1:
+                balance -= adj_yearly_maintenance
 
         age = params.start_age + (m - 1) / 12.0 if params.start_age is not None else None
         snapshots.append({
             "month_index": m,
+            "calendar_month": cal_month,
             "age": age,
             "balance": balance,
             "monthly_withdrawal": monthly_withdrawal,
-            "yearly_withdrawal": adj_yearly_withdrawal if (yearly_withdrawal is not None and (m % 12 == 1)) else 0.0,
+            "yearly_withdrawal": adj_yearly_withdrawal if (yearly_withdrawal is not None and cal_month == 1) else 0.0,
+            "yearly_maintenance": adj_yearly_maintenance if (yearly_maintenance and cal_month == 1) else 0.0,
             "monthly_return": investment_return,
         })
 
@@ -109,6 +127,7 @@ def simulate_retirement(params: PlanParams, max_years: int = 100, adjust_withdra
 def required_initial_for_horizon_closed_form(params: PlanParams, years: Optional[int] = None) -> float:
     """
     Closed-form present value in real terms to last N years with fixed monthly and yearly withdrawals.
+    Annual maintenance costs (if any) are combined with yearly withdrawals for the PV calculation.
     """
     N_years = years if years is not None else params.target_years
     n_months = N_years * 12
@@ -116,6 +135,7 @@ def required_initial_for_horizon_closed_form(params: PlanParams, years: Optional
     PMT_m = params.monthly_withdrawal
     PV_monthly = 0.0
     PV_yearly = 0.0
+    maintenance_pv = 0.0
 
     # Present value of monthly withdrawals (ordinary annuity)
     if abs(i_m) < 1e-9:
@@ -124,11 +144,12 @@ def required_initial_for_horizon_closed_form(params: PlanParams, years: Optional
         PV_monthly = PMT_m * (1 - (1 + i_m) ** (-n_months)) / i_m
 
     # Present value of yearly withdrawals (at the start of each year, i.e., months 1, 13, ...)
-    if params.yearly_withdrawal is not None and params.yearly_withdrawal > 0:
-        PMT_y = params.yearly_withdrawal
+    total_yearly = 0.0
+    if (params.yearly_withdrawal is not None and params.yearly_withdrawal > 0) or params.yearly_maintenance > 0:
+        PMT_y = (params.yearly_withdrawal or 0.0) + params.yearly_maintenance
         i_y = (1 + i_m) ** 12 - 1  # effective real annual rate
         n_years = N_years
-        # Present value of yearly withdrawals (ordinary annuity, annual payments)
+        # Present value of combined annual payments (withdrawals + maintenance)
         if abs(i_y) < 1e-9:
             PV_yearly = PMT_y * n_years
         else:
@@ -176,36 +197,41 @@ def years_until_depletion(params: PlanParams, max_years: int = 100) -> float:
 if __name__ == "__main__":
     # Example: simple scenario
     p = PlanParams(
-        current_savings=1_000_000,
+        current_savings=344_000,
         annual_return_nominal=0.125, # (Tesouro Selic/CDI after 15% IR and 0.20% custody)
         annual_inflation=0.047, # Current 12‑month IPCA
         monthly_withdrawal=5_000,
-        yearly_withdrawal=20_000,  # Additional yearly withdrawal in January
+        yearly_withdrawal=20_000,  # Additional yearly withdrawal in January for trips/bonuses
+        yearly_maintenance=30_000,  # house + car upkeep paid each January
         target_years=17,
         withdrawal_timing="start",
-        start_age=83
+        start_age=83,
+        start_month=3  # start in March instead of January
     )
 
     yrs = years_until_depletion(p, max_years=60)
-    print(f"Deterministic simulation → savings last ~{yrs:.1f} years.")
+    print(f"Deterministic simulation → savings last ~{yrs:.1f} years. (includes yearly maintenance ${p.yearly_maintenance:,.0f})")
 
     # Print monthly simulation table using tabulate
     sim = simulate_retirement(p, max_years=60)
     table = []
     for snap in sim["snapshots"]:
         month = snap["month_index"]
+        cal = snap.get("calendar_month", None)
+        cal_str = cal if cal is not None else "-"
         age = f"{snap['age']:.2f}" if snap["age"] is not None else "-"
         balance = f"${snap['balance']:,.2f}"
         monthly_wd = f"${snap['monthly_withdrawal']:,.2f}"
         yearly_wd = f"${snap['yearly_withdrawal']:,.2f}" if snap.get('yearly_withdrawal', 0.0) else "-"
+        maint_wd = f"${snap.get('yearly_maintenance',0.0):,.2f}" if snap.get('yearly_maintenance', 0.0) else "-"
         monthly_return = f"${snap['monthly_return']:,.2f}"
-        table.append([month, age, balance, monthly_wd, yearly_wd, monthly_return])
-    headers = ["Month", "Age", "Balance", "Monthly Wd", "Yearly Wd", "Monthly Return"]
+        table.append([month, cal_str, age, balance, monthly_wd, yearly_wd, maint_wd, monthly_return])
+    headers = ["Month", "CalMon", "Age", "Balance", "Monthly Wd", "Yearly Wd", "Maint Wd", "Monthly Return"]
     print("\n" + tabulate(table, headers=headers, tablefmt="github"))
 
     selected_years = 20
     req_cf = required_initial_for_horizon_closed_form(p, years=selected_years)
-    print(f"Closed-form estimate → required initial to last {selected_years} years: ${req_cf:,.0f}")
+    print(f"Closed-form estimate → required initial to last {selected_years} years (including maintenance): ${req_cf:,.0f}")
 
     req_sim = required_initial_for_horizon_via_simulation(p, years=selected_years)
-    print(f"Simulation-based required initial to last {selected_years} years: ${req_sim:,.0f}")
+    print(f"Simulation-based required initial to last {selected_years} years (including maintenance): ${req_sim:,.0f}")

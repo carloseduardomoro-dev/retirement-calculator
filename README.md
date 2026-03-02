@@ -1,9 +1,11 @@
 
 # Retirement Calculator (Python)
 
-A simple, realistic retirement savings longevity calculator implemented in pure Python. It can:
+A simple, realistic retirement savings longevity calculator implemented in pure Python. The `PlanParams` dataclass now supports an `yearly_maintenance` field to capture recurring annual costs such as house or car maintenance. These are treated similarly to other yearly withdrawals.
 
-- Simulate month-by-month how long savings last given expected returns, inflation, expenses, income, and annual extras.
+It can:
+
+- Simulate month-by-month how long savings last given expected returns, inflation, expenses, income, annual extras, and optional recurring maintenance costs (e.g. house/car).
 - Estimate the **required initial savings** to make funds last a target number of years using a closed-form real-rate approach.
 - Optionally solve the required initial savings using a simulation-based bisection for more complex assumptions.
 
